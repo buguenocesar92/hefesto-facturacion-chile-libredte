@@ -1,0 +1,86 @@
+# ---------------------------------------------------------------------------
+# Capa de producción Hefesto Studio para LibreDTE Slim.
+#
+# Este archivo NO reemplaza al `compose.yaml` oficial: se le suma. El stack
+# upstream queda intacto y legible, y todo lo que hace Hefesto está aquí.
+#
+# Uso (en `.env`):
+#   COMPOSE_FILE=compose.yaml:compose.hefesto.yaml
+#
+# Si además querés los datos en directorios del host, encadená el override
+# oficial de LibreDTE:
+#   COMPOSE_FILE=compose.yaml:compose.hefesto.yaml:overrides/local-dirs.yaml
+#
+# Qué agrega:
+#   1. `backup-hefesto`: respaldos con manifiesto y SHA-256, restauración
+#      validada y rechazo a pisar datos. Complementa al `backup` oficial, que
+#      sigue disponible (perfil `backup`) sin cambios.
+#   2. Tiempos de parada abonables: los contenedores que atienden una emisión
+#      en curso terminan en vez de que se les corte a la mitad.
+#
+# Este archivo no define `name:` a propósito: el nombre del proyecto sale del
+# `compose.yaml` (o de `COMPOSE_PROJECT_NAME`) para que ambos coincidan.
+# ---------------------------------------------------------------------------
+
+# Los anclajes YAML no cruzan archivos: el de logging se redefine acá, con los
+# mismos valores por defecto que usa upstream.
+x-logging-hefesto: &logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-10m}
+    max-file: "${LOG_MAX_FILE:-3}"
+
+services:
+  # --- Respaldos Hefesto (perfil "hefesto") --------------------------------
+  # Misma imagen y misma forma que el `backup` oficial, pero con
+  # `scripts/backup-hefesto.sh` (manifiesto, SHA-256, validación de rutas,
+  # rechazo a restaurar sobre datos existentes y servicio detenido al final).
+  backup-hefesto:
+    image: postgres:${POSTGRES_VERSION:-18}-alpine
+    profiles: ["hefesto"]
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      TZ: ${TZ:-America/Santiago}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-libredte_slim}
+      DB_USER: ${DB_USER:-libredte_slim}
+      DB_PASSWORD: ${DB_PASSWORD:?Define DB_PASSWORD en .env}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+    volumes:
+      # Lectura y escritura: `restore` los repone (y solo con --force si hay datos).
+      - media:/data/media
+      - state:/data/state
+      - backups:/backups
+      - ./.env:/host/.env:ro
+      - ./scripts/backup-hefesto.sh:/usr/local/bin/backup-hefesto.sh:ro
+    entrypoint: ["bash", "/usr/local/bin/backup-hefesto.sh"]
+    healthcheck:
+      test: ["CMD", "bash", "/usr/local/bin/backup-hefesto.sh", "health"]
+      interval: 5m
+      timeout: 30s
+      retries: 3
+      start_period: 5m
+    deploy:
+      resources:
+        limits:
+          memory: ${BACKUP_MEMORY_LIMIT:-512m}
+
+  # --- Paradas limpias ------------------------------------------------------
+  # Decisión consciente de Hefesto (no viene de upstream):
+  # `docker compose stop` / `down` mata el proceso tras el periodo de gracia y
+  # no alcanza a completar lo que estaba emitiendo. Los valores son holgados a
+  # propósito: perder una emisión a medias es peor que tardar más en parar.
+  web:
+    stop_grace_period: 5m
+  worker:
+    stop_grace_period: 5m
+  worker-emision-masiva:
+    # Trabaja de a una tarea por proceso: una planilla grande puede tardar
+    # bastante más que un request web.
+    stop_grace_period: 30m

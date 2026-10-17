@@ -1,0 +1,112 @@
+# =============================================================================
+# DEMOSTRACION - CONSULTAS A LA API DE LIBREDTE SLIM (SOLO LECTURA)
+# -----------------------------------------------------------------------------
+# ATENCION, LEER ANTES DE USAR:
+#   1. La API de la version publicada (v0.1.0b1) es de SOLO LECTURA (GET).
+#      NO emite documentos. Ver ../../docs/09-EXPORTACION-O-TRASPASO.md
+#   2. Cualquier token valido ve TODOS los datos del contribuyente activo:
+#      no hay permisos por usuario ni por documento.
+#   3. El token NO pasa por el segundo factor.
+#   4. Hay UN token por usuario: generar uno nuevo invalida el anterior.
+#
+# El token de aca es de EJEMPLO y no existe. El real se genera en
+# Mi perfil -> API, y se guarda en el gestor de secretos del servidor que
+# consume la API: nunca en un repositorio ni en el navegador.
+# =============================================================================
+
+BASE="https://facturacion.ejemplo.cl"
+TOKEN="TOKEN-DE-EJEMPLO-NO-USAR"
+AUTH=(-H "Authorization: Token ${TOKEN}")
+
+# --- Documentacion -----------------------------------------------------------
+# Generada desde el codigo con drf-spectacular: es la fuente de verdad.
+curl -sS "${AUTH[@]}" "${BASE}/api/schema/"          # OpenAPI (YAML/JSON)
+# En el navegador: /api/docs/ (Swagger UI) y /api/redoc/ (ReDoc)
+# Sin token esas paginas igual responden: describen endpoints, no entregan datos.
+
+# --- Listados ----------------------------------------------------------------
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/emitidos/?size=5"
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/recibidos/?size=5"
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/borradores/?size=5"
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/emisores/"
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/sucursales/"
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/items/?size=5"
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/items/categorias/"
+
+# Busquedas (endpoint dedicado, con o sin paginacion):
+curl -sS "${AUTH[@]}" --get --data-urlencode "value=76.123.456-7" \
+     "${BASE}/api/v1/receptores/buscar/"
+curl -sS "${AUTH[@]}" --get --data-urlencode "value=cafe" \
+     "${BASE}/api/v1/items/buscar/"
+
+# --- Paginacion, filtros y orden --------------------------------------------
+# La respuesta trae: {"last_page": N, "data": [...]}
+BASE_URL="${BASE}/api/v1/emitidos/?size=100"
+
+curl -sS "${AUTH[@]}" "${BASE_URL}&page=1"
+curl -sS "${AUTH[@]}" "${BASE_URL}&page=2"
+
+# Orden (asc / desc):
+curl -sS "${AUTH[@]}" --get \
+     --data-urlencode "size=20" \
+     --data-urlencode "sort[0][field]=fecha" \
+     --data-urlencode "sort[0][dir]=desc" \
+     "${BASE}/api/v1/emitidos/"
+
+# Filtro (el indice permite encadenar varios):
+curl -sS "${AUTH[@]}" --get \
+     --data-urlencode "size=20" \
+     --data-urlencode "filter[0][field]=periodo" \
+     --data-urlencode "filter[0][value]=2026-10" \
+     --data-urlencode "sort[0][field]=fecha" \
+     --data-urlencode "sort[0][dir]=asc" \
+     "${BASE}/api/v1/emitidos/"
+
+# Filtro por tipo de documento (campo calculado, no es el del modelo):
+curl -sS "${AUTH[@]}" --get \
+     --data-urlencode "filter[0][field]=tipo" \
+     --data-urlencode "filter[0][value]=33" \
+     "${BASE}/api/v1/emitidos/"
+
+# Filtro por receptor (busca a la vez en razon social y en RUT):
+curl -sS "${AUTH[@]}" --get \
+     --data-urlencode "filter[0][field]=receptor" \
+     --data-urlencode "filter[0][value]=sasco" \
+     "${BASE}/api/v1/emitidos/"
+
+# Que campos acepta cada endpoint: /api/schema/. No todos coinciden con los del
+# modelo; varios son calculados.
+
+# --- Resumenes por periodo ---------------------------------------------------
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/ventas/periodos/"
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/compras/periodos/"
+curl -sS "${AUTH[@]}" "${BASE}/api/v1/compras/documentos/?size=50"
+
+# --- Recorrer todas las paginas (bucle en shell) ---------------------------
+BASE_URL="${BASE}/api/v1/emitidos/?size=200"
+PAGE=1
+while :; do
+    JSON="$(curl -sS "${AUTH[@]}" "${BASE_URL}&page=${PAGE}")"
+    # Guardar, transformar o volcar cada pagina aca.
+    echo "${JSON}" > "emitidos-pagina-${PAGE}.json"
+    LAST="$(printf '%s' "${JSON}" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin).get("last_page",1))')"
+    [ "${PAGE}" -ge "${LAST}" ] && break
+    PAGE=$((PAGE + 1))
+done
+
+# --- Errores -----------------------------------------------------------------
+# 401: token ausente, invalido, o revocado (al generar uno nuevo muere el viejo).
+# 403: el usuario no tiene acceso al contribuyente activo.
+# 400: filtro o orden mal formado.
+curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Token invalido" \
+     "${BASE}/api/v1/emitidos/"
+
+# --- Lo que NO existe (no lo intentes) --------------------------------------
+# POST/PUT/PATCH/DELETE contra estos endpoints: no hay vistas de escritura.
+# No hay webhook de emision.
+# No hay endpoint de emision, ni de aceptacion, ni de anulacion.
+# No hay "exportar CSV": la API devuelve JSON.
+#
+# Lo que la tabla comercial de LibreDTE llama "API REST para emitir documentos"
+# NO esta en el codigo de la version publicada. Ver 09-EXPORTACION-O-TRASPASO.md

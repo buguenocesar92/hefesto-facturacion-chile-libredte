@@ -1,0 +1,30 @@
+# Secretos y configuración local: nunca versionar.
+.env
+.env.*
+!.env.example
+
+# Overrides locales de compose (ignorado por git).
+compose.override.yaml
+
+# Datos en directorios del host (override local-dirs.yaml).
+data/
+
+# Respaldos copiados al host.
+backups/
+*.tar.gz
+*-db.dump
+*-manifest.json
+*-COMPLETE
+*-env
+
+# Ruido del editor y del sistema: nada de esto debe terminar en un despliegue.
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Credenciales del cliente (certificados, claves privadas).
+*.pfx
+*.p12
+*.pem
+*.key

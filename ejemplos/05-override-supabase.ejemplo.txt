@@ -1,0 +1,119 @@
+# =============================================================================
+# DEMOSTRACION - OVERRIDE PARA APUNTAR A UN POSTGRESQL EXTERNO (SUPAVASE)
+# -----------------------------------------------------------------------------
+# ESTO NO ESTA VERIFICADO Y NO HA SIDO PROBADO. Es una guia de trabajo.
+#
+# Que se verifico leyendo el codigo (tag v0.1.0b1) y el compose upstream:
+#   - La app usa PostgreSQL nativo con psycopg 3 y Django 6.1.
+#   - NO usa extensiones de PostgreSQL (busqueda de CREATE EXTENSION, pg_trgm,
+#     unaccent, uuid-ossp, citext y django.contrib.postgres: cero resultados).
+#   - El compose FIXA DB_HOST: db y DB_PORT: "5432" con literales, NO los toma
+#     del `.env`. Por eso cambiar variables de entorno NO alcanza: hace falta
+#     un override como este.
+#
+# Que NO se verifico (y hay que mirar antes de prometer nada):
+#   - Que version de PostgreSQL ofrece Supabase hoy. Su documentacion de
+#     conexion revisada no declara las versiones soportadas. El stack usa
+#     postgres:18. Sin ese dato NO se puede afirmar compatibilidad.
+#   - Que corran las migraciones sin cambios.
+#   - El comportamiento con el pooler de Supabase.
+#
+# Conclusion honesta: no se puede afirmar compatibilidad con Supabase. Si un
+# cliente la pide, hay que probarla en un entorno de pruebas antes de cotizar o
+# comprometer nada.
+#
+# USO (solo en pruebas, nunca sobre datos reales):
+#   cp ejemplos/05-override-supabase.ejemplo.txt overrides/supabase.yaml
+#   # editar los valores
+#   COMPOSE_FILE=compose.yaml:compose.hefesto.yaml:overrides/supabase.yaml
+#   docker compose config -q
+# =============================================================================
+
+services:
+  # --- Aplicacion ------------------------------------------------------------
+  setup:
+    environment:
+      DB_HOST: ${EXTERNAL_DB_HOST}
+      DB_PORT: ${EXTERNAL_DB_PORT}
+      # OJO: `PGSSLMODE` no esta en el compose upstream. Si la base exige TLS,
+      # hay que agregarlo como variable extra. Ver la nota de TLS mas abajo.
+
+  web:
+    environment:
+      DB_HOST: ${EXTERNAL_DB_HOST}
+      DB_PORT: ${EXTERNAL_DB_PORT}
+
+  worker:
+    environment:
+      DB_HOST: ${EXTERNAL_DB_HOST}
+      DB_PORT: ${EXTERNAL_DB_PORT}
+
+  worker-emision-masiva:
+    environment:
+      DB_HOST: ${EXTERNAL_DB_HOST}
+      DB_PORT: ${EXTERNAL_DB_PORT}
+
+  # --- Respaldos -------------------------------------------------------------
+  # Los dos servicios de respaldo heredan DB_HOST del compose base (`db`), asi
+  # que hay que redefinirlos o respaldarian contra la base equivocada.
+  backup:
+    environment:
+      DB_HOST: ${EXTERNAL_DB_HOST}
+      DB_PORT: ${EXTERNAL_DB_PORT}
+
+  backup-hefesto:
+    environment:
+      DB_HOST: ${EXTERNAL_DB_HOST}
+      DB_PORT: ${EXTERNAL_DB_PORT}
+
+  # --- Base local: dejarla de lado ------------------------------------------
+  # Sin esto, `docker compose up` levanta el PostgreSQL del stack y se crea una
+  # base vacia en paralelo. Para este caso se desactiva el servicio.
+  db:
+    profiles: ["nunca"]
+
+# -----------------------------------------------------------------------------
+# Variables que hay que agregar al `.env` (con valores DE EJEMPLO)
+# -----------------------------------------------------------------------------
+#   # Conexion DIRECTA: la que exige pg_dump y las migraciones.
+#   # En Supabase es IPv6 (o IPv4 con el add-on correspondiente).
+#   EXTERNAL_DB_HOST=db.TU-PROYECTO.supabase.co
+#   EXTERNAL_DB_PORT=5432
+#
+#   DB_NAME=postgres
+#   DB_USER=postgres.TU-PROYECTO
+#   DB_PASSWORD=<la del proyecto, en el gestor de secretos>
+#
+# NOTAS DE CONEXION (segun la documentacion de Supabase revisada):
+#   - Conexion directa: `db.<ref>.supabase.co:5432`. IPv6.
+#   - Pooler modo sesion (IPv4): `aws-<idx>-<region>.pooler.supabase.com:5432`
+#   - Pooler modo transaccion: puerto 6543, **no soporta prepared statements** y
+#     pierde estado de sesion (advisory locks, LISTEN/NOTIFY). Con Celery
+#     guardando resultados en la base, hay que probarlo.
+#   - Para `pg_dump`, respaldos y migraciones, la documentacion de Supabase
+#     recomienda conexion DIRECTA. Por eso el ejemplo usa esa.
+#
+# TLS:
+#   - Supabase exige TLS. Nunca `sslmode=disable`.
+#   - Para verificar de verdad el servidor, `sslmode=verify-full` con el
+#     certificado raiz, no solo `require`.
+#   - Este kit NO tiene una variable para el modo de SSL de la base: habria que
+#     agregar `PGSSLMODE` al entorno de los servicios (y revisar que la libreria
+#     la respete) en un override propio. PENDIENTE de probar.
+#
+# SEGURIDAD (si se llega a probar):
+#   - Rol dedicado con permisos minimos. NUNCA el rol `postgres` de
+#     administracion.
+#   - Una base dedicada por instalacion de Slim.
+#   - Credenciales solo en el servidor, nunca en el navegador.
+#   - La base no se publica en ningun puerto del host: eso se mantiene.
+# -----------------------------------------------------------------------------
+# LO QUE NO CAMBIA:
+#   `media` y `state` siguen siendo volumenes locales: si la base se va del
+#   servidor, los certificados siguen aqui, y al revés. Mover la base NO mueve
+#   los respaldos.
+# -----------------------------------------------------------------------------
+# COMO VOLVER ATRAS:
+#   quitar `overrides/supabase.yaml` del COMPOSE_FILE y hacer `up -d`.
+#   Ojo: las dos bases tendran datos distintos. No se mezclan solas.
+# =============================================================================

@@ -1,0 +1,83 @@
+# =============================================================================
+# DEMOSTRACION - PROGRAMAR LOS RESPALDOS
+# -----------------------------------------------------------------------------
+# Hay dos formas de respaldar, y conviene conocer las dos:
+#
+#   A) El servicio `backup-hefesto` (perfil `hefesto`), que ya corre solo en
+#      bucle cada BACKUP_INTERVAL_HOURS. Es el metodo recomendado.
+#   B) Un cron del HOST, que lanza un `docker compose run` una vez por dia.
+#      Util cuando el perfil no esta activo o se quiere controlar la hora.
+#
+# Ojo: NO actives los dos a la vez con el mismo directorio de salida. Van al
+# mismo `backups` y se pisan los nombres.
+# =============================================================================
+
+# =============================================================================
+# A) Con el servicio (recomendado)
+# =============================================================================
+# En el `.env`:
+#   COMPOSE_PROFILES=hefesto
+#   BACKUP_INTERVAL_HOURS=24
+#   BACKUP_KEEP_DAYS=30
+#
+# El servicio `backup-hefesto` entra en bucle: respalda, espera, repite.
+# Cada respaldo escribe dump, tar.gz, .env, manifiesto JSON, SHA-256 y el
+# marcador -COMPLETE.
+#
+# Verificar desde fuera:
+docker compose run --rm --no-deps backup-hefesto list
+docker compose run --rm --no-deps backup-hefesto health
+
+# =============================================================================
+# B) Con cron del host
+# =============================================================================
+# Si se prefiere dispararlo desde el sistema en vez de dejar un contenedor
+# corriendo: comentar el perfil `hefesto` en COMPOSE_PROFILES y usar esto.
+#
+# Decidir una hora que no sea la de mayor uso (por ejemplo, 03:17 evita caer
+# exacto en una hora redonda, junto con otros jobs del sistema).
+
+crontab -e
+
+# --- Respaldar todas las noches a las 03:17 ---------------------------------
+17 3 * * * cd /opt/libredte-slim && /usr/bin/docker compose run --rm --no-deps backup-hefesto now >> /var/log/libredte-backup.log 2>&1
+
+# --- Verificar la integridad del ultimo respaldo a las 07:00 ----------------
+# Si falla, la linea queda con error en el log: eso es la alerta.
+0 7 * * * cd /opt/libredte-slim && TS=$(/usr/bin/docker compose run --rm --no-deps backup-hefesto list | tail -1) && /usr/bin/docker compose run --rm --no-deps backup-hefesto verify "$TS" >> /var/log/libredte-backup.log 2>&1
+
+# --- Podar respaldos viejos (opcional) -------------------------------------
+# El script ya purga solo los respaldos COMPLETOS y vencidos. Esta linea es
+# para los respaldos del script de upstream, que usa otro directorio.
+# NO borrar a ciegas: un respaldo sin marcador -COMPLETE es justo el que hay
+# que investigar. Ver ../../docs/05-RESPALDOS-Y-RESTAURACION.md
+
+# =============================================================================
+# COPIA FUERA DEL SERVIDOR (esto si o si)
+# =============================================================================
+# Un respaldo en el mismo VPS no protege de perder el VPS.
+# Copiar a otra maquina, NAS, o almacenamiento de objetos versionado.
+#
+# Ejemplo con rclone hacia un bucket S3-compatible (ajustar el remoto):
+#   15 4 * * * rclone sync /opt/libredte-slim/data/backups remote:respaldo-slim
+#
+# Con retencion versionada (por ejemplo rclone + --backup-dir con fecha).
+# CUIDADO: los respaldos contienen .env, contrasenas y claves privadas de
+# certificados. El destino tiene que estar cifrado y con acceso restringido.
+#
+# Probar la restauracion periodicamente: un respaldo que nunca se restauro es
+# una hipotesis, no un respaldo.
+
+# =============================================================================
+# VERIFICAR QUE EL CRON CORRE
+# =============================================================================
+docker compose run --rm --no-deps backup-hefesto list     # debe listar respaldos
+docker compose run --rm --no-deps backup-hefesto health    # debe salir con exito
+tail -n 50 /var/log/libredte-backup.log
+
+# Si el cron no corre:
+#   - `docker` sin ruta completa: cron no carga el PATH del usuario. Usar
+#     /usr/bin/docker o definir PATH en la entrada de cron.
+#   - permisos: el usuario que corre cron necesita poder hablar con docker.
+#   - en Debian/Ubuntu crontab corre con un PATH minimo: definirlo explicitamente.
+# =============================================================================

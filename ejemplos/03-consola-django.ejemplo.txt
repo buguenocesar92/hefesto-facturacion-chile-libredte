@@ -1,0 +1,105 @@
+# =============================================================================
+# DEMOSTRACION - CHEATSHEET DE LA CONSOLA DE DJANGO
+# -----------------------------------------------------------------------------
+# Comandos utiles para administrar LibreDTE Slim por dentro.
+# La herramienta oficial del kit es el perfil `console`, que es `manage.py` con
+# el entorno de Slim y los datos del `.env`. Es el mismo programa que ejecuta
+# la aplicacion: no hay atajos ni backdoors.
+#
+# ATENCION: estos comandos escriben en la base de datos. En produccion, sacar
+# un respaldo antes. Ver ../../docs/05-RESPALDOS-Y-RESTAURACION.md
+# =============================================================================
+
+# --- Como entrar -------------------------------------------------------------
+docker compose run --rm console shell
+docker compose run --rm console <comando>     # un comando y sale
+
+# Equivalen a: python manage.py <lo que sigue>
+# En cualquier gestion que no sea esta, NO hay equivalente: el kit no expone un
+# panel de administracion del servidor. Es deliberado.
+
+# --- Superusuario ------------------------------------------------------------
+docker compose run --rm console createsuperuser
+
+# Cambiar una contrasena (si no se puede entrar a la interfaz):
+docker compose run --rm console changepassword nombre-usuario
+
+# Bloqueo por intentos fallidos: la app usa `LoginForm`, que ya contempla el
+# bloqueo. Si aun asi hay que intervenir, es por codigo: ver la nota de abajo.
+#
+# NOTA: los unicos comandos propios de la aplicacion son `seed` y `seed_demo`
+# (ver `apps/core/management/commands/`). Comandos como `unlock_user` NO
+# existen en Slim: usarlos seria inventarse una herramienta.
+
+# --- Usuarios ----------------------------------------------------------------
+docker compose run --rm console shell
+>>> from django.contrib.auth.models import User
+>>> User.objects.count()
+>>> User.objects.values_list('username', 'is_superuser', 'date_joined')
+
+# EL USUARIO QUE NO DEBERIA EXISTIR: `demo`, de SLIM_SEED_DEMO=1.
+>>> User.objects.filter(username='demo').exists()
+
+# --- Contribuyentes ----------------------------------------------------------
+>>> from apps.libredte.models import Contribuyente
+>>> Contribuyente.objects.values_list('rut', 'razon_social')
+
+# --- Datos y migraciones -----------------------------------------------------
+docker compose run --rm console showmigrations
+docker compose run --rm console showmigrations <app>
+
+# `setup` ya corre esto en cada arranque; correrlo a mano solo si hace falta:
+docker compose run --rm console migrate
+
+# Probar que una migracion dada aplica sin error:
+docker compose run --rm console migrate <app> <numero> --plan
+
+# OJO: `migrate` NO revierte solo. Ver ../../docs/06-ACTUALIZACIONES-Y-REVERSION.md
+
+# --- Tareas de Celery --------------------------------------------------------
+# La cola vive en valkey. Para ver el estado desde la app:
+docker compose run --rm console shell
+>>> from django_celery_results.models import TaskResult
+>>> TaskResult.objects.order_by('-date_created')[:10].values(
+...     'task_name', 'status', 'date_created')
+
+# Drenar una cola antes de detener. NO hay un comando de drainage en Slim.
+# El draining real se obtiene deteniendo los workers: compose.hefesto.yaml les
+# da `stop_grace_period` (5m web/worker, 30m emision masiva), y `docker compose
+# stop` espera ese plazo en vez de matarlos. Ver 05-RESPALDOS-Y-RESTAURACION.md
+docker compose stop worker worker-emision-masiva
+
+# --- Comandos propios de Slim ------------------------------------------------
+# Son los unicos dos, y los ejecuta `setup` en cada arranque:
+docker compose run --rm console seed         # catálogos, permission defaults
+docker compose run --rm console seed_demo    # datos de DEMO (solo desarrollo)
+
+# `seed_demo` crea el usuario `demo`. Con `SLIM_SEED_DEMO=1` en `.env`, esto se
+# ejecuta SOLO en el primer arranque, cuando la base esta vacia. Si se corre a
+# mano en produccion, queda una cuenta con contrasena publica.
+
+# --- Comprobaciones de salud -------------------------------------------------
+docker compose run --rm console check
+docker compose run --rm console showmigrations --check
+docker compose run --rm console shell -c "from django.db import connection; \
+    connection.cursor().execute('SELECT 1'); print('base OK')"
+# Ojo: `console shell` no acepta `-c`. Para un comando de una linea, usar
+# `console <comando> <args>`; para varios, `console shell` interactivo.
+
+# --- Archivos y permisos -----------------------------------------------------
+# El usuario de la app en la imagen es `slim` (UID 10001). Si se toca un volumen
+# a mano, hay que devolver los permisos:
+docker compose run --rm --user root console shell -c \
+  "chown -R 10001:10001 /var/lib/slim/state /var/lib/slim/media"
+
+# --- Sessiones de la aplicacion ---------------------------------------------
+# `SECRET_KEY` cambio y las sesiones abiertas quedaron invalidas:
+docker compose run --rm console clearsessions
+
+# --- Archivos estaticos ------------------------------------------------------
+# `setup` los regenera en cada `up`. Si igual hay que rehacerlos a mano:
+docker compose run --rm console collectstatic --noinput
+
+# --- Peticion de ayuda -------------------------------------------------------
+docker compose run --rm console help
+docker compose run --rm console help <subcomando>
