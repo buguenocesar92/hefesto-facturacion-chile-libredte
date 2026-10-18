@@ -2,16 +2,17 @@
 # dos workers de Celery) + LibreDTE Lib Core API + PostgreSQL + Valkey, con un
 # job de instalación (`setup`) y servicios opcionales (backup, mailpit, tools).
 #
-# Inicio rápido:
-#   cp .env.example .env
+# Inicio rápido (uso directo, sin Coolify):
+#   cp .env.example .env   # trae COMPOSE_FILE=compose.yaml:overrides/puertos.yaml
 #   docker compose up -d
 #   docker compose logs -f setup   # espera "==> Listo"
+#
+# En Coolify se usa este archivo solo: no publica puertos ni fija `name:`, y el
+# Traefik de Coolify enruta el dominio al servicio `caddy`, puerto 80.
 #
 # Producción: parte de .env.prod.example. Ver README.md.
 #
 # Las variables obligatorias no tienen default: compose no arranca sin ellas.
-
-name: ${COMPOSE_PROJECT_NAME:-libredte-slim}
 
 x-logging: &logging
   driver: json-file
@@ -300,9 +301,8 @@ services:
       UPLOAD_MAX_SIZE: ${UPLOAD_MAX_SIZE:-32M}
     security_opt:
       - no-new-privileges:true
-    # Coolify pone su Traefik delante; Caddy queda como gateway interno y no
-    # publica puertos al host. Para desarrollo directo (sin Coolify), encadenar
-    # `overrides/local-dirs.yaml` con un override que vuelva a abrir los puertos.
+    # Sin puertos al host: en Coolify, Traefik enruta el dominio a caddy:80.
+    # Uso directo (sin Coolify): COMPOSE_FILE=compose.yaml:overrides/puertos.yaml
     volumes:
       - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - media:/srv/media:ro
@@ -389,8 +389,7 @@ services:
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: 1
       MP_SMTP_AUTH_ALLOW_INSECURE: 1
-    ports:
-      - "${HTTP_BIND:-127.0.0.1}:${MAILPIT_PORT:-8025}:8025"
+    # Puertos al host: overrides/puertos.yaml.
 
 volumes:
   db_data:
