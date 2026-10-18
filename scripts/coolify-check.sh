@@ -6,7 +6,9 @@
 #   - sin `ports` publicados al host (Coolify ya pone Traefik);
 #   - sin `container_name` fijo, `privileged`, `cap_add`, `devices`,
 #     `network_mode: host`, `pid: host`, `ipc: host`, `security_opt: unconfined`;
-#   - sin bind a `/var/run/docker.sock`.
+#   - sin binds fuera del repo ni `docker.sock` en ninguna ruta;
+#   - sin `name:` fijo en la raíz (se mira el YAML fuente) ni en redes o
+#     volúmenes (en el render, su nombre debe ser `<proyecto>_<clave>`).
 #
 # Sale con código 0 si todo cumple, 1 si hay reglas rotas, 2 si el render del
 # compose falla (por ejemplo, por una variable interpolada mal).
@@ -112,10 +114,31 @@ for cf in "${compose_files[@]}"; do
         continue
     fi
 
+    # `name:` raíz fijo: se mira el fuente, porque el render siempre trae `name`.
+    if grep -qE '^name:[[:space:]]' "${cf}"; then
+        printf '  compose: name raíz fijo\n'
+        fail=$((fail + 1))
+    fi
+
+    # Redes y volúmenes: sin `name:` propio, compose los llama <proyecto>_<clave>.
+    while IFS= read -r line; do
+        [ -z "${line}" ] && continue
+        printf '  %s\n' "${line}"
+        fail=$((fail + 1))
+    done < <(printf '%s' "${rendered}" | jq -r '
+        .name as $p
+        | ((.networks // {}) | to_entries[]
+             | select(.value.name != ($p + "_" + .key))
+             | "network \(.key): name fijo"),
+          ((.volumes // {}) | to_entries[]
+             | select(.value.name != ($p + "_" + .key))
+             | "volume \(.key): name fijo")
+    ')
+
     # Servicios: revisamos reglas solo en los que NO tienen profiles.
     while IFS= read -r svc; do
         [ -z "${svc}" ] && continue
-        issues="$(printf '%s' "${rendered}" | jq -r --arg s "${svc}" '
+        issues="$(printf '%s' "${rendered}" | jq -r --arg s "${svc}" --arg root "${REPO_ROOT}" '
             .services[$s] as $svc
             | (if ($svc.profiles // []) | length > 0
                then []
@@ -140,9 +163,13 @@ for cf in "${compose_files[@]}"; do
                     (if ($svc.security_opt // []) | join(",")
                          | test("unconfined")
                          then "security_opt_unconfined" else empty end),
+                    (($svc.volumes // [])[]
+                         | select(.type == "bind")
+                         | select(((.source // "") == $root
+                                   or ((.source // "") | startswith($root + "/"))) | not)
+                         | "bind fuera del repo (" + (.source // "") + ")"),
                     (if ($svc.volumes // [])
-                         | map(.source // "") | join("\n")
-                         | test("/var/run/docker.sock")
+                         | map(.source // "") | any(test("docker\\.sock"))
                          then "docker_sock" else empty end)
                   ]
                end)
