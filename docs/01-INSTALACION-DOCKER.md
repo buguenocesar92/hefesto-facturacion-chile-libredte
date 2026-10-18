@@ -92,12 +92,17 @@ Obligatorias, sin las cuales compose se niega a arrancar:
 | `SITE_ADDRESS` | `facturacion.ejemplo.cl` | Lo mismo, para que Caddy pida el certificado solo |
 | `DB_PASSWORD` | `openssl rand -base64 32` | Generarla en el servidor |
 
-En `.env.example` ya viene activada la capa de Hefesto:
+En `.env.example` ya vienen los puertos de Caddy al host y el perfil de Hefesto
+(`backup-hefesto` ya está en `compose.yaml`):
 
 ```
-COMPOSE_FILE=compose.yaml:compose.hefesto.yaml
+COMPOSE_FILE=compose.yaml:overrides/puertos.yaml
 COMPOSE_PROFILES=hefesto
 ```
+
+Sin `overrides/puertos.yaml`, Caddy no publica puertos y el sitio no se ve desde
+fuera. Para servir 80/443 directamente: `HTTP_BIND=0.0.0.0`, `HTTP_PORT=80`,
+`HTTPS_PORT=443`.
 
 Detalles de cada variable en
 [`03-VARIABLES-Y-COMO-OBTENERLAS.md`](03-VARIABLES-Y-COMO-OBTENERLAS.md).
@@ -164,7 +169,7 @@ Recomendado: que los datos queden en directorios del host, que un
 datos que ya estén en volúmenes nombrados no se mueven solos.
 
 ```
-COMPOSE_FILE=compose.yaml:compose.hefesto.yaml:overrides/local-dirs.yaml
+COMPOSE_FILE=compose.yaml:overrides/puertos.yaml:overrides/local-dirs.yaml
 DATA_DIR=./data
 ```
 
@@ -185,8 +190,8 @@ Si se despliega con Coolify, el dominio, el proxy inverso y los certificados los
 gestiona Coolify, no Caddy. En ese caso:
 
 - `SITE_ADDRESS=:80` y `SITE_URL_SCHEMA=https`.
-- Caddy **no** publica puertos del host: se activa `overrides/traefik.yaml` (o se
-  deja que Coolify enrute al contenedor).
+- Caddy **no** publica puertos del host: se usa `compose.yaml` solo, sin
+  `overrides/puertos.yaml`, y Coolify enruta el dominio a `caddy:80`.
 - Coolify gestiona los `.env` desde su interfaz; el `.env` del host no es el que
   se lee.
 

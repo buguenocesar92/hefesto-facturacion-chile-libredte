@@ -62,6 +62,7 @@ proyecto de Docker Compose separado.
 cp .env.example .env
 # completa SITE_HOSTNAME, SITE_ADDRESS y DB_PASSWORD (obligatorias)
 chmod +x scripts/*.sh
+# .env.example trae COMPOSE_FILE=compose.yaml:overrides/puertos.yaml (puertos al host)
 docker compose config -q          # si falta algo, el compose no arranca
 docker compose up -d
 docker compose logs -f setup      # espera "==> Listo"
@@ -77,12 +78,13 @@ Con Coolify: `docs/02-INSTALACION-COOLIFY.md`.
 
 | Ruta | Qué es |
 |---|---|
-| `compose.yaml` | Stack oficial de LibreDTE, sin tocar |
-| `compose.hefesto.yaml` | Override de producción Hefesto (backups con manifiesto, paradas limpias) |
+| `compose.yaml` | Stack oficial de LibreDTE adaptado a Coolify: sin `name:` fijo ni puertos publicados, con `backup-hefesto` y paradas limpias incluidos |
+| `compose.hefesto.yaml` | Override Hefesto, ya fusionado en `compose.yaml` (opcional, mismo resultado) |
 | `scripts/backup.sh` | Respaldos oficiales de LibreDTE, sin tocar |
 | `scripts/backup-hefesto.sh` | Respaldos Hefesto: manifiesto, SHA-256, restauración validada |
 | `scripts/entrypoint.sh`, `lib.sh`, `setup.sh` | Scripts oficiales, sin tocar |
 | `overrides/local-dirs.yaml`, `overrides/traefik.yaml` | Overrides oficiales, sin tocar |
+| `overrides/puertos.yaml` | Publica los puertos de Caddy (y mailpit) para el uso directo sin Coolify |
 | `config/caddy/Caddyfile` | Caddy de upstream, sin tocar |
 | `docs/` | 10 documentos + el README original de upstream |
 | `ejemplos/` | Plantillas marcadas como DEMOSTRACIÓN |
@@ -90,7 +92,7 @@ Con Coolify: `docs/02-INSTALACION-COOLIFY.md`.
 
 ### Servicios
 
-`caddy` (el único que publica puertos), `web`, `worker`, `worker-emision-masiva`,
+`caddy` (la única entrada; publica puertos solo con `overrides/puertos.yaml`), `web`, `worker`, `worker-emision-masiva`,
 `libredte-lib-core-api`, `db`, `valkey`, `setup`, y con perfiles: `console`
 (tools), `backup` y `backup-hefesto` (ambos de respaldo), `mailpit` (desarrollo).
 
@@ -132,6 +134,29 @@ Solo `docker compose down -v` borra los volúmenes. Detalle y procedimiento en
 - Ejecutado con Docker: **no**.
 - Probado en un servidor: **no**.
 - Pendiente declarado: `docs/07-PRUEBAS-DE-ACEPTACION.md`.
+
+## Despliegue en Coolify (MVP Hefesto)
+
+- Recurso Docker Compose, rama `coolify`, archivo `compose.yaml` **solo**: no se
+  declara `COMPOSE_FILE` ni hace falta `compose.hefesto.yaml` ni
+  `overrides/traefik.yaml`.
+- Dominio asignado al servicio `caddy`, puerto `80`. Ningún servicio publica
+  puertos al host; Traefik de Coolify pone el TLS.
+- Variables obligatorias (en la interfaz de Coolify): `SITE_HOSTNAME` (dominio sin
+  puerto), `SITE_ADDRESS=:80`, `SITE_URL_SCHEMA=https`, `DB_PASSWORD`.
+- Versiones: fijar `SLIM_VERSION` y `CORE_API_VERSION` a un tag publicado. Sin
+  `SLIM_VERSION` la imagen se construye desde `master` del repositorio de Slim, y
+  `CORE_API_VERSION` usa `latest` por defecto.
+- `setup` es un job de una sola vez del que dependen `web` y los workers: si
+  falla, falla el despliegue.
+- El primer usuario se crea en `https://<dominio>/setup/`: hacerlo antes de
+  publicar el dominio.
+- Los perfiles `backup` y `hefesto` montan `./.env`, que no existe en el clon de
+  Coolify: no activar `COMPOSE_PROFILES` ahí sin crear antes ese archivo.
+- `mailpit` (perfil de desarrollo) no publica puertos en `compose.yaml`; están en
+  `overrides/puertos.yaml`.
+- SMTP opcional: sin `EMAIL_HOST`, Slim escribe los correos en el log.
+- Verificación del contrato: `bash scripts/coolify-check.sh`.
 
 ## Licencias
 
