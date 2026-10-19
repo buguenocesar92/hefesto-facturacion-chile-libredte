@@ -29,7 +29,7 @@ x-logging: &logging
 x-slim: &slim
   image: ${SLIM_VERSION:+ghcr.io/libredte/libredte-app-slim:}${SLIM_VERSION:-libredte-slim:local}
   build:
-    context: ${SLIM_REPO:-https://github.com/LibreDTE/libredte-app-slim.git}#${SLIM_VERSION:-master}
+    context: ${SLIM_REPO:-https://github.com/LibreDTE/libredte-app-slim.git}#${SLIM_VERSION:?Define SLIM_VERSION en .env (ej. v0.1.0b1). Default mutable (master) eliminado para evitar upgrades silenciosos entre deploys.}
     args:
       # Conserva `.git` en el contexto: el Dockerfile saca de ahí el commit.
       BUILDKIT_CONTEXT_KEEP_GIT_DIR: "1"
@@ -127,7 +127,7 @@ services:
 
   # El backend de Slim (timbra, firma, genera PDF, catálogos). Solo red interna.
   libredte-lib-core-api:
-    image: ghcr.io/libredte/libredte-lib-core-api:${CORE_API_VERSION:-latest}
+    image: ghcr.io/libredte/libredte-lib-core-api:${CORE_API_VERSION:?Define CORE_API_VERSION en .env (ej. v0.6.0). Latest mutable eliminado para evitar upgrades silenciosos.}
     restart: unless-stopped
     logging: *logging
     environment:
@@ -199,7 +199,10 @@ services:
     environment:
       <<: *slim-env
       # Solo Caddy llega a gunicorn: se confía en sus X-Forwarded-*.
-      FORWARDED_ALLOW_IPS: "*"
+      # Default confia solo en el container `caddy` (mismo nivel de red). Si
+      # el proxy real es otra IP/CIDR, el operador debe setear
+      # FORWARDED_ALLOW_IPS explícitamente y validar contra esa red.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-caddy}
     extra_hosts: *host-access
     volumes: *slim-volumes
     read_only: true
