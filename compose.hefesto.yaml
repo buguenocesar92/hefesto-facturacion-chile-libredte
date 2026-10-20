@@ -1,15 +1,10 @@
 # ---------------------------------------------------------------------------
 # Capa de producción Hefesto Studio para LibreDTE Slim.
 #
-# Este archivo NO reemplaza al `compose.yaml` oficial: se le suma. El stack
-# upstream queda intacto y legible, y todo lo que hace Hefesto está aquí.
-#
-# Uso (en `.env`):
-#   COMPOSE_FILE=compose.yaml:compose.hefesto.yaml
-#
-# Si además querés los datos en directorios del host, encadená el override
-# oficial de LibreDTE:
-#   COMPOSE_FILE=compose.yaml:compose.hefesto.yaml:overrides/local-dirs.yaml
+# YA NO HACE FALTA: `backup-hefesto` y los `stop_grace_period` de abajo están
+# fusionados en `compose.yaml` (Coolify usa un solo archivo). Se conserva para
+# instalaciones que ya tienen COMPOSE_FILE=compose.yaml:compose.hefesto.yaml:
+# superponerlo da exactamente el mismo resultado.
 #
 # Qué agrega:
 #   1. `backup-hefesto`: respaldos con manifiesto y SHA-256, restauración
@@ -18,8 +13,7 @@
 #   2. Tiempos de parada abonables: los contenedores que atienden una emisión
 #      en curso terminan en vez de que se les corte a la mitad.
 #
-# Este archivo no define `name:` a propósito: el nombre del proyecto sale del
-# `compose.yaml` (o de `COMPOSE_PROJECT_NAME`) para que ambos coincidan.
+# Este archivo no define `name:` a propósito: el nombre del proyecto sale de `COMPOSE_PROJECT_NAME` o de Coolify para que ambos coincidan.
 # ---------------------------------------------------------------------------
 
 # Los anclajes YAML no cruzan archivos: el de logging se redefine acá, con los

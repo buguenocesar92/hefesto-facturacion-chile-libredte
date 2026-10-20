@@ -2,16 +2,17 @@
 # dos workers de Celery) + LibreDTE Lib Core API + PostgreSQL + Valkey, con un
 # job de instalación (`setup`) y servicios opcionales (backup, mailpit, tools).
 #
-# Inicio rápido:
-#   cp .env.example .env
+# Inicio rápido (uso directo, sin Coolify):
+#   cp .env.example .env   # trae COMPOSE_FILE=compose.yaml:overrides/puertos.yaml
 #   docker compose up -d
 #   docker compose logs -f setup   # espera "==> Listo"
+#
+# En Coolify se usa este archivo solo: no publica puertos ni fija `name:`, y el
+# Traefik de Coolify enruta el dominio al servicio `caddy`, puerto 80.
 #
 # Producción: parte de .env.prod.example. Ver README.md.
 #
 # Las variables obligatorias no tienen default: compose no arranca sin ellas.
-
-name: ${COMPOSE_PROJECT_NAME:-libredte-slim}
 
 x-logging: &logging
   driver: json-file
@@ -28,7 +29,7 @@ x-logging: &logging
 x-slim: &slim
   image: ${SLIM_VERSION:+ghcr.io/libredte/libredte-app-slim:}${SLIM_VERSION:-libredte-slim:local}
   build:
-    context: ${SLIM_REPO:-https://github.com/LibreDTE/libredte-app-slim.git}#${SLIM_VERSION:-master}
+    context: ${SLIM_REPO:-https://github.com/LibreDTE/libredte-app-slim.git}#${SLIM_VERSION:?Define SLIM_VERSION en .env (ej. v0.1.0b1). Default mutable (master) eliminado para evitar upgrades silenciosos entre deploys.}
     args:
       # Conserva `.git` en el contexto: el Dockerfile saca de ahí el commit.
       BUILDKIT_CONTEXT_KEEP_GIT_DIR: "1"
@@ -67,7 +68,7 @@ x-slim-env: &slim-env
   PLUGIN_LIBREDTE_BACKEND_API_TOKEN: ${PLUGIN_LIBREDTE_BACKEND_API_TOKEN:-}
   PLUGIN_APIGATEWAYCL_API_URL: ${PLUGIN_APIGATEWAYCL_API_URL:-}
   PLUGIN_APIGATEWAYCL_API_TOKEN: ${PLUGIN_APIGATEWAYCL_API_TOKEN:-}
-  CORE_API_VERSION: ${CORE_API_VERSION:-latest}
+  CORE_API_VERSION: ${CORE_API_VERSION:?Define CORE_API_VERSION en .env (ej. v0.6.0). Latest mutable eliminado para evitar upgrades silenciosos.}
   LIBREDTE_BACKEND_COMMIT: ${LIBREDTE_BACKEND_COMMIT:-}
 
 x-slim-volumes: &slim-volumes
@@ -126,7 +127,7 @@ services:
 
   # El backend de Slim (timbra, firma, genera PDF, catálogos). Solo red interna.
   libredte-lib-core-api:
-    image: ghcr.io/libredte/libredte-lib-core-api:${CORE_API_VERSION:-latest}
+    image: ghcr.io/libredte/libredte-lib-core-api:${CORE_API_VERSION:?Define CORE_API_VERSION en .env (ej. v0.6.0). Latest mutable eliminado para evitar upgrades silenciosos.}
     restart: unless-stopped
     logging: *logging
     environment:
@@ -190,13 +191,18 @@ services:
   web:
     <<: *slim
     restart: unless-stopped
+    # Paradas limpias (Hefesto): no cortar una emisión en curso.
+    stop_grace_period: 5m
     depends_on:
       setup:
         condition: service_completed_successfully
     environment:
       <<: *slim-env
       # Solo Caddy llega a gunicorn: se confía en sus X-Forwarded-*.
-      FORWARDED_ALLOW_IPS: "*"
+      # Default confia solo en el container `caddy` (mismo nivel de red). Si
+      # el proxy real es otra IP/CIDR, el operador debe setear
+      # FORWARDED_ALLOW_IPS explícitamente y validar contra esa red.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-caddy}
     extra_hosts: *host-access
     volumes: *slim-volumes
     read_only: true
@@ -227,6 +233,7 @@ services:
   worker:
     <<: *slim
     restart: unless-stopped
+    stop_grace_period: 5m
     depends_on:
       setup:
         condition: service_completed_successfully
@@ -259,6 +266,8 @@ services:
   worker-emision-masiva:
     <<: *slim
     restart: unless-stopped
+    # De a una tarea por proceso: una planilla grande tarda más que un request.
+    stop_grace_period: 30m
     depends_on:
       setup:
         condition: service_completed_successfully
@@ -300,10 +309,8 @@ services:
       UPLOAD_MAX_SIZE: ${UPLOAD_MAX_SIZE:-32M}
     security_opt:
       - no-new-privileges:true
-    ports:
-      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:80"
-      - "${HTTP_BIND:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
-      - "${HTTP_BIND:-127.0.0.1}:${HTTPS_PORT:-8443}:443/udp"
+    # Sin puertos al host: en Coolify, Traefik enruta el dominio a caddy:80.
+    # Uso directo (sin Coolify): COMPOSE_FILE=compose.yaml:overrides/puertos.yaml
     volumes:
       - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - media:/srv/media:ro
@@ -380,6 +387,46 @@ services:
         limits:
           memory: ${BACKUP_MEMORY_LIMIT:-512m}
 
+  # --- Respaldos Hefesto (perfil "hefesto") --------------------------------
+  # Misma imagen y misma forma que el `backup` oficial, pero con
+  # `scripts/backup-hefesto.sh` (manifiesto, SHA-256, validación de rutas,
+  # rechazo a restaurar sobre datos existentes y servicio detenido al final).
+  backup-hefesto:
+    image: postgres:${POSTGRES_VERSION:-18}-alpine
+    profiles: ["hefesto"]
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      TZ: ${TZ:-America/Santiago}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-libredte_slim}
+      DB_USER: ${DB_USER:-libredte_slim}
+      DB_PASSWORD: ${DB_PASSWORD:?Define DB_PASSWORD en .env}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+    volumes:
+      # Lectura y escritura: `restore` los repone (y solo con --force si hay datos).
+      - media:/data/media
+      - state:/data/state
+      - backups:/backups
+      - ./.env:/host/.env:ro
+      - ./scripts/backup-hefesto.sh:/usr/local/bin/backup-hefesto.sh:ro
+    entrypoint: ["bash", "/usr/local/bin/backup-hefesto.sh"]
+    healthcheck:
+      test: ["CMD", "bash", "/usr/local/bin/backup-hefesto.sh", "health"]
+      interval: 5m
+      timeout: 30s
+      retries: 3
+      start_period: 5m
+    deploy:
+      resources:
+        limits:
+          memory: ${BACKUP_MEMORY_LIMIT:-512m}
+
   # Opcional (perfil "mailpit", desarrollo): recibe todo el correo saliente.
   # EMAIL_HOST=mailpit y EMAIL_PORT=1025; interfaz web en MAILPIT_PORT.
   mailpit:
@@ -390,8 +437,7 @@ services:
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: 1
       MP_SMTP_AUTH_ALLOW_INSECURE: 1
-    ports:
-      - "${HTTP_BIND:-127.0.0.1}:${MAILPIT_PORT:-8025}:8025"
+    # Puertos al host: overrides/puertos.yaml.
 
 volumes:
   db_data:

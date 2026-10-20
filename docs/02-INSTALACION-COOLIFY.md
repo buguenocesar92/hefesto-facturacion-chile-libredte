@@ -28,21 +28,12 @@ Coolify **sí sirve** para este kit, pero con dos condiciones:
 
 1. **New Resource → Public Repository** (o *Add Resource → Docker Compose* si
    preferís pegar el contenido).
-2. Repositorio: el que contenga este kit, o el contenido de `compose.yaml` +
-   `compose.hefesto.yaml` en un recurso "Docker Compose".
-3. Brunch: `master` o el que uses.
+2. Repositorio: el que contenga este kit, rama `coolify`.
+3. Archivo compose: `compose.yaml`, **solo**.
 
-Como el kit usa `COMPOSE_FILE`, lo más simple es **no ponerlo** en el `.env` de
-la interfaz y en su lugar fijar el compose en el recurso, o declarar:
-
-```
-COMPOSE_FILE=compose.yaml:compose.hefesto.yaml
-```
-
-> Si declarás `COMPOSE_FILE` como variable de entorno en Coolify, verificá que la
-> interfaz no la inyecte en un lugar que impida resolver los otros archivos. Es
-> un punto frágil de los despliegues por variables: si Caddy o `db` no aparecen
-> en `docker compose ps`, es que el `COMPOSE_FILE` no se aplicó.
+No hace falta `COMPOSE_FILE`: `compose.yaml` ya incluye `backup-hefesto` y las
+paradas limpias de `compose.hefesto.yaml`, no publica puertos y no fija `name:`
+(Coolify pone el nombre del proyecto). No declares `COMPOSE_FILE` en la interfaz.
 
 ## 3. Variables de entorno
 
@@ -54,13 +45,13 @@ Cargalas en la interfaz del recurso. Obligatorias:
 | `SITE_ADDRESS` | `:80` — Coolify ya se encarga del TLS |
 | `SITE_URL_SCHEMA` | `https` |
 | `DB_PASSWORD` | Una generada, no una de ejemplo |
-| `COMPOSE_PROFILES` | `hefesto` |
-| `COMPOSE_FILE` | `compose.yaml:compose.hefesto.yaml` |
 
 Generá la contraseña con `openssl rand -base64 32` **en el servidor o en tu
 equipo**, no acá.
 
-`SLIM_SEED_DEMO` debe quedar en `0`.
+`SLIM_SEED_DEMO` debe quedar en `0`. Fijá también `SLIM_VERSION` y
+`CORE_API_VERSION` a un tag publicado. No declares `COMPOSE_PROFILES=hefesto`
+hasta tener el `.env` en disco (ver §6).
 
 **Cuidado con `SITE_EXTRA_HOSTS`:** cada host extra es una puerta adicional
 aceptada por Slim. En Coolify basta con el dominio principal.
@@ -70,37 +61,15 @@ aceptada por Slim. En Coolify basta con el dominio principal.
 Solo `caddy` puede recibir tráfico. En el recurso, asigná el dominio **al
 servicio `caddy`, puerto 80**, y **no publiques el puerto en el host**.
 
-Para que Caddy no intente abrir 80/443 en el host, encadená el override oficial
-de LibreDTE para Traefik:
-
-```
-COMPOSE_FILE=compose.yaml:compose.hefesto.yaml:overrides/traefik.yaml
-TRAEFIK_HOST=facturacion.ejemplo.cl
-TRAEFIK_NETWORK=<red del proxy de Coolify>
-```
-
-Para encontrar el nombre real de la red del proxy:
+`compose.yaml` no publica puertos de ningún servicio, así que no hace falta
+`overrides/traefik.yaml` ni declarar la red del proxy: Coolify conecta `caddy` a
+su Traefik y enruta el dominio a `caddy:80`. Para comprobarlo en el servidor:
 
 ```shell
-docker network ls
+docker compose config --format json | jq '[.services[] | select(.ports != null)] | length'   # 0
 ```
 
-Coolify normalmente usa una red propia cuyo nombre hay que **confirmar en el
-servidor**; no lo des por sabido y lo escribas a ciegas. Después:
-
-```shell
-docker compose config | grep -A5 '^  caddy:'   # confirmar `ports: []`
-```
-
-Si `caddy` sigue con puertos publicados, el dominio no va a funcionar y hay dos
-proxies compitiendo por el mismo puerto.
-
-### Alternativa si el override con Traefik no resulta
-
-Publicar el puerto de Caddy solo en `127.0.0.1` y dejar que Coolify enrute por su
-proxy, o mapear el puerto de Caddy a uno libre y_PUBLICADO_ del host para que el
-proxy lo alcance. Perder tiempo acá es normal: es la parte más frágil del
-despliegue y hay que verificarla en el servidor, no de memoria.
+`overrides/puertos.yaml` es solo para el uso directo sin Coolify: no lo actives acá.
 
 ## 5. Volúmenes y persistencia
 

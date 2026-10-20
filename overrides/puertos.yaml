@@ -1,0 +1,18 @@
+# Publica en el host los puertos de Caddy (y de mailpit, con su perfil), para
+# el uso directo sin Coolify. `compose.yaml` no publica puertos porque en
+# Coolify la única entrada es su Traefik.
+#
+# En .env:
+#   COMPOSE_FILE=compose.yaml:overrides/puertos.yaml
+# Encadenable con local-dirs:
+#   COMPOSE_FILE=compose.yaml:overrides/puertos.yaml:overrides/local-dirs.yaml
+
+services:
+  caddy:
+    ports:
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:80"
+      - "${HTTP_BIND:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
+      - "${HTTP_BIND:-127.0.0.1}:${HTTPS_PORT:-8443}:443/udp"
+  mailpit:
+    ports:
+      - "${HTTP_BIND:-127.0.0.1}:${MAILPIT_PORT:-8025}:8025"
